@@ -1,0 +1,10 @@
+version: "3.9"
+
+services:
+  collector:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    # Mount .env as writable so session string is persisted
+    volumes:
+      - ./.env:/app/.env

@@ -1,0 +1,26 @@
+{
+  "name": "telegram-collector",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "ts-node src/index.ts",
+    "build": "tsc",
+    "start:prod": "node dist/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "input": "^1.0.1",
+    "telegram": "^2.26.22"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "@types/node-fetch": "^2.6.13",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  },
+  "type": "commonjs"
+}
