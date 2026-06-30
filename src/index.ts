@@ -5,6 +5,7 @@ import { Api } from "telegram/tl";
 import * as input from "input";
 import * as dotenv from "dotenv";
 import * as fs from "fs";
+import * as http from "http";
 import * as path from "path";
 
 dotenv.config();
@@ -209,6 +210,16 @@ async function sendToAdmin(text: string, parseMode: "markdown" | "html" = "markd
 
 let client: TelegramClient;
 let adminEntity: any;
+
+// ─── Health server (required by PaaS web services) ─────────────────────────
+
+const PORT = parseInt(process.env.PORT || "8080", 10);
+http.createServer((_, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("ok");
+}).listen(PORT, () => {
+  console.log(`❤️  Health server listening on port ${PORT}`);
+});
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 
