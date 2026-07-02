@@ -265,55 +265,77 @@ async function main() {
 
   console.log(`👁️  Watched IDs: ${[...watchedIds].map(id => id.toString()).join(", ")}`);
 
-  client.addEventHandler(async (event: NewMessageEvent) => {
-    const message = event.message;
-    const rawChatId = message.chatId?.toString() ?? "undefined";
-    if (!message?.text) {
-      console.log(`⏭️  Skipped (no text) — chatId=${rawChatId}`);
-      return;
-    }
+  // ─── Track last seen message ID per group (dedup) ────────────────────
 
-    const chatId = BigInt(rawChatId);
-    console.log(`📨  Message received — chatId=${rawChatId}, inWatchedSet=${watchedIds.has(chatId)}`);
-    if (!watchedIds.has(chatId)) return;
+  const lastMsgId = new Map<string, number>();
+  for (const entry of groupMap.values()) {
+    try {
+      const msgs = await client.getMessages(entry.id.toString(), { limit: 1 });
+      if (msgs.length > 0) lastMsgId.set(entry.id.toString(), msgs[0].id);
+    } catch (_) {}
+  }
 
-    const groupEntry = [...groupMap.values()].find((g) => g.id === chatId);
-    if (!groupEntry) return;
+  async function handleMessage(text: string, chatId: bigint, msgId: number, source: string) {
+    const key = chatId.toString();
+    const entry = [...groupMap.values()].find((g) => g.id === chatId);
+    if (!entry) return;
+    if (msgId <= (lastMsgId.get(key) ?? 0)) return;
+    lastMsgId.set(key, msgId);
 
-    // Get sender name
+    console.log(`📨  [${source}] ${entry.title}`);
+
     let sender = "Unknown";
     try {
-      const senderEntity = await client.getEntity(message.senderId!);
-      const u = senderEntity as any;
-      sender = [u.firstName, u.lastName].filter(Boolean).join(" ") || u.username || u.title || "Unknown";
+      const e = await client.getEntity(key);
+      sender = (e as any).title || (e as any).username || "Unknown";
     } catch (_) {}
 
-    const date = new Date((message.date ?? 0) * 1000);
-
-    // 1. Send the job message
-    const jobFormatted = formatJobMessage(groupEntry.title, sender, message.text, date);
+    const jobMsg = formatJobMessage(entry.title, sender, text, new Date());
+    const buttons = entry.link ? [{ text: "🔗 فتح في المجموعة", url: entry.link }] : undefined;
     try {
-      const buttons = groupEntry.link ? [{ text: "🔗 فتح في المجموعة", url: groupEntry.link }] : undefined;
-      await sendToAdmin(jobFormatted, "markdown", buttons);
+      await sendToAdmin(jobMsg, "markdown", buttons);
     } catch (err) {
-      console.error("Failed to send job message:", (err as Error).message);
+      console.error("Send failed:", (err as Error).message);
       return;
     }
 
-    // 2. Generate and send proposal
-    console.log(`⚙️  Generating proposal for message from "${groupEntry.title}"...`);
-    try {
-      const proposal          = await generateProposal(message.text);
-      const proposalFormatted = formatProposal(proposal);
-      await sendToAdmin(proposalFormatted);
-      console.log(`✅  Proposal sent.`);
-    } catch (err) {
-      console.error("Failed to generate/send proposal:", (err as Error).message);
-      await sendToAdmin("⚠️ *فشل توليد العرض* — تحقق من مفتاح API.");
+    if (AI_KEY) {
+      console.log(`⚙️  Proposal...`);
+      try {
+        const p = await generateProposal(text);
+        if (p) await sendToAdmin(formatProposal(p));
+      } catch (err) {
+        console.error("Proposal failed:", (err as Error).message);
+        await sendToAdmin("⚠️ *فشل توليد العرض*");
+      }
     }
+  }
+
+  // ─── Event handler (catches supergroups where updates arrive) ────────
+
+  client.addEventHandler(async (event: NewMessageEvent) => {
+    const msg = event.message;
+    if (!msg?.text) return;
+    const chatId = BigInt(msg.chatId?.toString() ?? "0");
+    if (!watchedIds.has(chatId)) return;
+    await handleMessage(msg.text, chatId, msg.id, "Event");
   }, new NewMessage({}));
 
-  console.log("📡  Listening for new messages... (Ctrl+C to stop)\n");
+  // ─── Polling (catches broadcast channels where updates are silent) ────
+
+  setInterval(async () => {
+    for (const entry of groupMap.values()) {
+      try {
+        const msgs = await client.getMessages(entry.id.toString(), { limit: 3 });
+        for (const msg of msgs) {
+          if (!msg?.text) continue;
+          await handleMessage(msg.text, entry.id, msg.id, "Poll");
+        }
+      } catch (_) {}
+    }
+  }, 30_000);
+
+  console.log("📡  Listening + polling every 30s... (Ctrl+C to stop)\n");
   await new Promise(() => {});
 }
 
