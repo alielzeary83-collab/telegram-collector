@@ -16,8 +16,8 @@ const API_ID          = parseInt(process.env.API_ID || "0", 10);
 const API_HASH        = process.env.API_HASH || "";
 const PHONE_NUMBER    = process.env.PHONE_NUMBER || "";
 const ADMIN           = process.env.ADMIN_USERNAME || "";
-const AI_KEY   = process.env.GROQ_API_KEY || process.env.NVIDIA_API_KEY || process.env.OPENROUTER_API_KEY || "";
-const AI_MODEL = process.env.AI_MODEL || "llama-3.3-70b-versatile";
+const AI_KEY   = process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY || process.env.NVIDIA_API_KEY || process.env.OPENROUTER_API_KEY || "";
+const AI_MODEL = process.env.AI_MODEL || "gemini-2.0-flash";
 const ENV_PATH        = path.resolve(__dirname, "../.env");
 
 const PROXY_IP        = process.env.PROXY_IP || "";
@@ -37,8 +37,7 @@ if (!API_ID || !API_HASH || !PHONE_NUMBER || !ADMIN || SOURCE_GROUPS.length === 
   process.exit(1);
 }
 if (!AI_KEY) {
-  console.error("❌  GROQ_API_KEY (or NVIDIA_API_KEY / OPENROUTER_API_KEY) is missing from .env");
-  process.exit(1);
+  console.warn("⚠️  No AI key — proposals will be skipped. Set GEMINI_API_KEY in .env");
 }
 
 // ─── Session helpers ────────────────────────────────────────────────────────
@@ -163,22 +162,33 @@ const SYSTEM_PROMPT = `أنت علي، مستقل مصري بتقدم على م�
 
 اكتب العرض فقط. بدون مقدمة، بدون شرح، بدون علامات markdown.`;
 async function generateProposal(jobText: string): Promise<string> {
-  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${AI_KEY}`,
-    },
-    body: JSON.stringify({
-      model: AI_MODEL,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user",   content: `إعلان المشروع:\n${jobText}` },
-      ],
-      max_tokens: 1024,
-      temperature: 0.7,
-    }),
-  });
+  if (!AI_KEY) return "";
+
+  const isGemini = AI_KEY.startsWith("AIza");
+  const url = isGemini
+    ? `https://generativelanguage.googleapis.com/v1beta/models/${AI_MODEL}:generateContent?key=${AI_KEY}`
+    : "https://api.groq.com/openai/v1/chat/completions";
+
+  const headers: any = { "Content-Type": "application/json" };
+  if (!isGemini) headers["Authorization"] = `Bearer ${AI_KEY}`;
+
+  const body = isGemini
+    ? {
+        system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        contents: [{ parts: [{ text: `إعلان المشروع:\n${jobText}` }] }],
+        generationConfig: { maxOutputTokens: 1024, temperature: 0.7 },
+      }
+    : {
+        model: AI_MODEL,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: `إعلان المشروع:\n${jobText}` },
+        ],
+        max_tokens: 1024,
+        temperature: 0.7,
+      };
+
+  const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
 
   if (!response.ok) {
     const err = await response.text();
@@ -186,6 +196,9 @@ async function generateProposal(jobText: string): Promise<string> {
   }
 
   const data = await response.json() as any;
+  if (isGemini) {
+    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "⚠️ لم يتم توليد عرض.";
+  }
   return data.choices?.[0]?.message?.content?.trim() || "⚠️ لم يتم توليد عرض.";
 }
 
@@ -268,7 +281,7 @@ async function main() {
   const watchedIds = new Set([...groupMap.values()].map((g) => g.id));
 
   console.log(`\n👀  Monitoring ${groupMap.size} group(s) → forwarding to ${ADMIN}`);
-  console.log(`🤖  Proposals via Groq (${AI_MODEL})\n`);
+  console.log(`🤖  Proposals via ${AI_KEY.startsWith("AIza") ? "Gemini" : "Groq"} (${AI_MODEL})\n`);
 
   console.log(`👁️  Watched IDs: ${[...watchedIds].map(id => id.toString()).join(", ")}`);
 
